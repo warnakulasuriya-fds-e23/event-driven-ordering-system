@@ -2,6 +2,7 @@
 /main
 producer/main
 consumer/main
+/producer/producer
 *.o
 
 # Go mod cache and local build dirs
