@@ -1,0 +1,17 @@
+# Build artifacts
+/main
+producer/main
+consumer/main
+*.o
+
+# Go mod cache and local build dirs
+.modcache/
+.mod/
+.gocache/
+
+# Logs
+*.log
+
+# Editor / OS
+.DS_Store
+.directory
