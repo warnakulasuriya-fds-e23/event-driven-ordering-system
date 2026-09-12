@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"fmt"
+	"os"
 	"strings"
 	"time"
 
@@ -15,6 +16,17 @@ func main() {
 
 	logger.log("INFO", "producer starting",
 		strEntry("kafka_brokers", brokerList))
+
+	// The Avro schema is the contract for the events this service publishes.
+	schema, serr := loadOrderSchema(orderAvscPath())
+	if serr != nil {
+		logger.log("ERROR", "failed to load order avro schema",
+			strEntry("avro_schema", orderAvscPath()),
+			strEntry("error", serr.Error()))
+		os.Exit(1)
+	}
+	logger.log("INFO", "order avro schema loaded",
+		strEntry("avro_schema", orderAvscPath()))
 
 	writer := kafka.NewWriter(kafka.WriterConfig{
 		Brokers: brokers(),
@@ -30,9 +42,10 @@ func main() {
 	for {
 		order := newRandomOrder()
 
-		payload, perr := encode(order)
+		payload, perr := schema.Encode(order)
 		if perr != nil {
-			logger.log("ERROR", "order encode failed",
+			logger.log("ERROR", "order avro encode failed",
+				strEntry("order_id", order.OrderId),
 				strEntry("error", perr.Error()))
 			time.Sleep(1 * time.Second)
 			continue
@@ -61,6 +74,7 @@ func main() {
 				strEntry("order_id", order.OrderId),
 				strEntry("product", order.Product),
 				numEntry("price", fmt.Sprint(order.Price)),
+				numEntry("payload_bytes", fmt.Sprint(len(payload))),
 				strEntry("kafka_delivery", "success"))
 		}
 

@@ -24,3 +24,8 @@ func brokers() []string {
 func topic() string {
 	return envOrDefault("KAFKA_TOPIC", "orders")
 }
+
+// orderAvscPath is the location of the order Avro schema file.
+func orderAvscPath() string {
+	return envOrDefault("ORDER_AVSC_PATH", "schema/order.avsc")
+}

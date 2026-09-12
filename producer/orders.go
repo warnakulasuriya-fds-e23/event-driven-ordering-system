@@ -1,7 +1,6 @@
 package main
 
 import (
-	"encoding/json"
 	"fmt"
 	"math/rand"
 
@@ -9,12 +8,13 @@ import (
 )
 
 // Order is the canonical schema for events on the "orders" topic.
-// The Go field names are idiomatic (public, capitalised); the `json:"..."`
-// tags pin the wire keys to their defined form (orderId, product, price).
+// Go field names are idiomatic (public, capitalised); the `avro:"..."` tags
+// bind each field to its Avro record field in schema/order.avsc, which keeps
+// the wire keys at their defined form (orderId, product, price).
 type Order struct {
-	OrderId string  `json:"orderId"`
-	Product string  `json:"product"`
-	Price   float64 `json:"price"`
+	OrderId string  `avro:"orderId"`
+	Product string  `avro:"product"`
+	Price   float64 `avro:"price"`
 }
 
 // productCatalog returns the finite set of products an order may reference.
@@ -41,9 +41,4 @@ func newRandomOrder() Order {
 		Product: randomProduct(),
 		Price:   randomPrice(),
 	}
-}
-
-// encode serializes an order to the JSON payload written to kafka.
-func encode(o Order) ([]byte, error) {
-	return json.Marshal(o)
 }
