@@ -29,3 +29,8 @@ func topic() string {
 func groupID() string {
 	return envOrDefault("KAFKA_GROUP_ID", "orders-consumer")
 }
+
+// orderAvscPath is the location of the order Avro schema file.
+func orderAvscPath() string {
+	return envOrDefault("ORDER_AVSC_PATH", "schema/order.avsc")
+}

@@ -17,8 +17,13 @@ RUN CGO_ENABLED=0 GOOS=linux go build -o app
 
 # ---- Runtime stage ----------------------------------------------
 # The binary is fully static, so it runs on an empty image.
+# WORKDIR /app + the schema file make the default ORDER_AVSC_PATH
+# (schema/order.avsc) resolve inside the container.
 FROM scratch
 
+WORKDIR /app
+
 COPY --from=builder /app/app /app/app
+COPY schema/order.avsc /app/schema/order.avsc
 
 ENTRYPOINT ["/app/app"]

@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"fmt"
+	"os"
 	"strings"
 	"time"
 
@@ -16,6 +17,17 @@ func main() {
 	logger.log("INFO", "consumer starting",
 		strEntry("kafka_brokers", brokerList),
 		strEntry("kafka_group_id", groupID()))
+
+	// The Avro schema is the contract for the events this service consumes.
+	schema, serr := loadOrderSchema(orderAvscPath())
+	if serr != nil {
+		logger.log("ERROR", "failed to load order avro schema",
+			strEntry("avro_schema", orderAvscPath()),
+			strEntry("error", serr.Error()))
+		os.Exit(1)
+	}
+	logger.log("INFO", "order avro schema loaded",
+		strEntry("avro_schema", orderAvscPath()))
 
 	reader := kafka.NewReader(kafka.ReaderConfig{
 		Brokers:  brokers(),
@@ -50,7 +62,7 @@ func main() {
 			continue
 		}
 
-		order, perr := parse(m.Value)
+		order, perr := schema.Decode(m.Value)
 		if perr != nil {
 			logger.log("WARNING", "unparseable order event",
 				numEntry("kafka_offset", fmt.Sprint(m.Offset)),
@@ -58,13 +70,14 @@ func main() {
 			continue
 		}
 
-		// Log the event using the decoded Order schema, plus the raw payload.
+		// Log the decoded event. The raw payload is binary Avro, so only the
+		// deserialized fields are logged.
 		logger.log("INFO", "order received",
 			numEntry("kafka_partition", fmt.Sprint(m.Partition)),
 			numEntry("kafka_offset", fmt.Sprint(m.Offset)),
+			numEntry("payload_bytes", fmt.Sprint(len(m.Value))),
 			strEntry("order_id", order.OrderId),
 			strEntry("product", order.Product),
-			numEntry("price", fmt.Sprint(order.Price)),
-			strEntry("event", string(m.Value)))
+			numEntry("price", fmt.Sprint(order.Price)))
 	}
 }
