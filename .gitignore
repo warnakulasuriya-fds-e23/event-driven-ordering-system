@@ -16,3 +16,8 @@ consumer/main
 # Editor / OS
 .DS_Store
 .directory
+# Dead Letter Queue files (file-based DLQ)
+dlq/
+dlq-producer/
+dlq-consumer/
+*.dlq.jsonl

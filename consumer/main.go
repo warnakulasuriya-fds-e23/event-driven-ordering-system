@@ -36,6 +36,20 @@ func main() {
 	// endpoint is available as soon as the process is ready.
 	StartAggregationServer(aggregator, aggregationPort(), logger)
 
+	// Set up the file-based DLQ writer for unparseable messages.
+	dlqFile, derr := openDLQFile(dlqFilePath())
+	if derr != nil {
+		logger.log("ERROR", "failed to open DLQ file",
+			strEntry("dlq_path", dlqFilePath()),
+			strEntry("error", derr.Error()))
+		os.Exit(1)
+	}
+	defer dlqFile.Close()
+	dlq := &fileDLQ{file: dlqFile, path: dlqFilePath()}
+
+	logger.log("INFO", "dlq file ready",
+		strEntry("dlq_path", dlqFilePath()))
+
 	reader := kafka.NewReader(kafka.ReaderConfig{
 		Brokers:  brokers(),
 		GroupID:  groupID(),
@@ -50,20 +64,21 @@ func main() {
 		strEntry("kafka_brokers", brokerList),
 		strEntry("kafka_group_id", groupID()),
 		strEntry("aggregation_port", aggregationPort()),
-		strEntry("aggregation_endpoint", "/metrics"))
+		strEntry("aggregation_endpoint", "/metrics"),
+		strEntry("dlq_path", dlqFilePath()))
 
 	// Throttle reporting of transient read errors so an idle consumer does not
 	// spam the log when there are simply no new events.
 	lastErrLog := time.Now()
 
 	for {
-		m, err := reader.ReadMessage(context.Background())
+		m, err := readMessageWithRetry(reader, consumerRetryConfig(), logger)
 		if err != nil {
-			// No new data (or a transient error). The reader backs off on its
-			// own; log at a low cadence and keep polling.
+			// Retry exhausted or permanent error. No specific message to DLQ
+			// (we didn't receive one), so just log and keep polling.
 			now := time.Now()
 			if now.Sub(lastErrLog) > 15*time.Second {
-				logger.log("WARNING", "message read error",
+				logger.log("ERROR", "message read failed after retries",
 					strEntry("error", err.Error()))
 				lastErrLog = now
 			}
@@ -73,9 +88,29 @@ func main() {
 
 		order, perr := schema.Decode(m.Value)
 		if perr != nil {
-			logger.log("WARNING", "unparseable order event",
+			// Poison message: log, DLQ with metadata, commit offset, continue.
+			logger.log("ERROR", "unparseable order event sent to DLQ",
 				numEntry("kafka_offset", fmt.Sprint(m.Offset)),
-				strEntry("error", perr.Error()))
+				numEntry("kafka_partition", fmt.Sprint(m.Partition)),
+				strEntry("error", perr.Error()),
+				strEntry("dlq_path", dlqFilePath()))
+
+			dlqErr := dlq.Append(ConsumerDLQEntry{
+				Timestamp:       nowUTC(),
+				Topic:           topic(),
+				Partition:       m.Partition,
+				Offset:          m.Offset,
+				Error:           perr.Error(),
+				RawBytesLength:  len(m.Value),
+			})
+			if dlqErr != nil {
+				logger.log("ERROR", "failed to write to DLQ file",
+					strEntry("dlq_path", dlqFilePath()),
+					strEntry("error", dlqErr.Error()))
+			}
+
+			// Commit the offset so we don't re-read and re-DLQ this message.
+			reader.CommitMessages(context.Background(), m)
 			continue
 		}
 
@@ -92,4 +127,35 @@ func main() {
 			strEntry("product", order.Product),
 			numEntry("price", fmt.Sprint(order.Price)))
 	}
+}
+
+// readMessageWithRetry wraps reader.ReadMessage with retry logic for transient errors.
+func readMessageWithRetry(reader *kafka.Reader, cfg RetryConfig, logger *Logger) (kafka.Message, error) {
+	var lastErr error
+	for attempt := 0; attempt < cfg.MaxRetries; attempt++ {
+		m, err := reader.ReadMessage(context.Background())
+		if err == nil {
+			return m, nil
+		}
+		lastErr = err
+		if !kafkaTransientError(err) {
+			// Permanent error; don't retry.
+			return kafka.Message{}, err
+		}
+		if attempt < cfg.MaxRetries-1 {
+			delay := cfg.BaseDelay * time.Duration(1<<attempt)
+			logger.log("WARNING", "message read retry",
+				numEntry("attempt", fmt.Sprint(attempt+1)),
+				numEntry("max_retries", fmt.Sprint(cfg.MaxRetries)),
+				strEntry("error", err.Error()))
+			time.Sleep(delay)
+		}
+	}
+	return kafka.Message{}, lastErr
+}
+
+// consumerRetryConfig returns the consumer retry configuration from environment.
+// This is a package-level alias for retryConfig() to keep main.go readable.
+func consumerRetryConfig() RetryConfig {
+	return retryConfig()
 }

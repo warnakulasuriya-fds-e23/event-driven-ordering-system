@@ -3,7 +3,7 @@
 FROM golang:alpine AS builder
 
 # git is required to fetch Go dependencies during `go mod download`.
-RUN apk add --no-cache git
+RUN apk add --no-cache git make
 
 WORKDIR /app
 

@@ -47,21 +47,27 @@ services:
       - /opt/kafka/bin/kafka-topics.sh --bootstrap-server kafka:9092 --create --if-not-exists --topic orders --partitions 1 --replication-factor 1
 
   # ---- Producer: publishes random order events to "orders" ----------
+  # Retries transient Kafka write failures before writing to the file-based DLQ.
   producer:
     build: ./producer
     container_name: orders-producer
     environment:
       KAFKA_BOOTSTRAP_SERVERS: kafka:9092
       KAFKA_TOPIC: orders
+      PRODUCER_MAX_RETRIES: "3"
+      PRODUCER_BASE_DELAY_MS: "100"
+      DLQ_FILE_PATH: "/dlq/producer-dlq.jsonl"
+    volumes:
+      - ./dlq-producer:/dlq
     depends_on:
       kafka-init:
         condition: service_completed_successfully
     restart: unless-stopped
 
   # ---- Consumer: logs events pulled from "orders" -------------------
-  # Also exposes an HTTP aggregation API on AGGREGATION_PORT (default 8080)
-  # so operators / dashboards can poll real-time metrics without redeploying
-  # or adding a separate service.
+  # Also exposes an HTTP aggregation API on AGGREGATION_PORT (default 8080).
+  # Retries transient Kafka read failures. Unparseable messages are written to
+  # the file-based DLQ and their offset is committed so they are not re-read.
   consumer:
     build: ./consumer
     container_name: orders-consumer
@@ -70,8 +76,13 @@ services:
       KAFKA_TOPIC: orders
       KAFKA_GROUP_ID: orders-consumer
       AGGREGATION_PORT: "8080"
+      CONSUMER_MAX_RETRIES: "3"
+      CONSUMER_BASE_DELAY_MS: "1000"
+      DLQ_FILE_PATH: "/dlq/consumer-dlq.jsonl"
     ports:
       - "8080:8080"
+    volumes:
+      - ./dlq-consumer:/dlq
     depends_on:
       kafka-init:
         condition: service_completed_successfully
