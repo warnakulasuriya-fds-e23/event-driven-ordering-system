@@ -34,3 +34,8 @@ func groupID() string {
 func orderAvscPath() string {
 	return envOrDefault("ORDER_AVSC_PATH", "schema/order.avsc")
 }
+
+// aggregationPort is the TCP port the consumer exposes its aggregation HTTP API on.
+func aggregationPort() string {
+	return envOrDefault("AGGREGATION_PORT", "8080")
+}

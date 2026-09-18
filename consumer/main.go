@@ -29,6 +29,13 @@ func main() {
 	logger.log("INFO", "order avro schema loaded",
 		strEntry("avro_schema", orderAvscPath()))
 
+	// In-memory aggregation state shared by the Kafka reader and the HTTP API.
+	aggregator := NewAggregator()
+
+	// Start the aggregation HTTP server before entering the Kafka loop so the
+	// endpoint is available as soon as the process is ready.
+	StartAggregationServer(aggregator, aggregationPort(), logger)
+
 	reader := kafka.NewReader(kafka.ReaderConfig{
 		Brokers:  brokers(),
 		GroupID:  groupID(),
@@ -41,7 +48,9 @@ func main() {
 
 	logger.log("INFO", "consumer ready",
 		strEntry("kafka_brokers", brokerList),
-		strEntry("kafka_group_id", groupID()))
+		strEntry("kafka_group_id", groupID()),
+		strEntry("aggregation_port", aggregationPort()),
+		strEntry("aggregation_endpoint", "/metrics"))
 
 	// Throttle reporting of transient read errors so an idle consumer does not
 	// spam the log when there are simply no new events.
@@ -69,6 +78,9 @@ func main() {
 				strEntry("error", perr.Error()))
 			continue
 		}
+
+		// Feed the in-memory aggregator with every successfully decoded event.
+		aggregator.Record(order)
 
 		// Log the decoded event. The raw payload is binary Avro, so only the
 		// deserialized fields are logged.
