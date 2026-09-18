@@ -1,0 +1,199 @@
+openapi: "3.0.3"
+info:
+  title: Orders Consumer Aggregation API
+  description: |
+    Read-only HTTP API that exposes real-time aggregation metrics for the
+    orders-consumer service.
+
+    The data is held in-memory (updated by the Kafka reader loop) and served
+    as a JSON snapshot on demand. No separate aggregation service is required.
+
+    ## Authentication
+
+    None. This is an internal service endpoint intended for operators and
+    dashboards running in the same network.
+
+    ## File-based DLQ
+
+    Unparseable messages are written to a JSONL file on disk (configured via
+    `DLQ_FILE_PATH`). See the project README for details.
+  version: "1.0.0"
+  contact:
+    name: Orders Consumer Team
+
+servers:
+  - url: http://localhost:8080
+    description: Default local development server
+  - url: http://{host}:{port}
+    description: Generic deployment
+    variables:
+      host:
+        default: localhost
+        description: Hostname or IP of the consumer container
+      port:
+        default: "8080"
+        description: TCP port configured via AGGREGATION_PORT env var
+
+tags:
+  - name: Aggregation
+    description: Real-time order aggregation metrics
+
+paths:
+  /metrics:
+    get:
+      tags:
+        - Aggregation
+      summary: Get current aggregation metrics
+      description: |
+        Returns a point-in-time snapshot of all current aggregation metrics.
+
+        The snapshot is computed under a read lock, so it is always internally
+        consistent even while the Kafka reader loop is recording new events.
+
+        **Polling model:** This is a request/response endpoint. There is no
+        streaming, WebSocket, or Server-Sent Events. Clients poll at their
+        desired interval.
+      operationId: getMetrics
+      responses:
+        "200":
+          description: Current aggregation metrics snapshot
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AggregationResult'
+              example:
+                overall:
+                  total_sum: 21345.67
+                  overall_average: 38.72
+                  order_count: 551
+                by_product:
+                  laptop:
+                    sum: 5000.00
+                    average: 1000.00
+                    count: 5
+                  keyboard:
+                    sum: 250.00
+                    average: 25.00
+                    count: 10
+        "405":
+          description: Method not allowed (only GET is supported)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error: "method not allowed"
+        "500":
+          description: Internal server error (extremely unlikely; JSON marshaling failure)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error: "internal error"
+      security: []
+
+components:
+  schemas:
+    AggregationResult:
+      type: object
+      required:
+        - overall
+        - by_product
+      properties:
+        overall:
+          $ref: '#/components/schemas/Overall'
+        by_product:
+          $ref: '#/components/schemas/ByProduct'
+      description: |
+        Top-level aggregation snapshot returned by the `/metrics` endpoint.
+
+        All monetary values are in the same unit as the `price` field of the
+        Avro schema (float64).
+
+    Overall:
+      type: object
+      required:
+        - total_sum
+        - overall_average
+        - order_count
+      properties:
+        total_sum:
+          type: number
+          format: double
+          description: Sum of all order prices seen so far
+          example: 21345.67
+        overall_average:
+          type: number
+          format: double
+          description: |
+            Mean price across all orders (`total_sum / order_count`).
+            `0` when no orders have been consumed yet.
+          example: 38.72
+        order_count:
+          type: integer
+          format: int64
+          description: Total number of orders consumed
+          example: 551
+      description: Overall aggregation across all products.
+
+    ByProduct:
+      type: object
+      description: |
+        Map of product name → per-product aggregates.
+
+        Keys are product names as they appear in the `product` field of the
+        order event (e.g., `laptop`, `keyboard`, `mouse`, `monitor`, etc.).
+
+        The product catalog is finite and bounded, so the map never grows
+        unbounded. Orders with a product not seen before are still tracked
+        dynamically.
+      additionalProperties:
+        $ref: '#/components/schemas/ProductAgg'
+      example:
+        laptop:
+          sum: 5000.00
+          average: 1000.00
+          count: 5
+        keyboard:
+          sum: 250.00
+          average: 25.00
+          count: 10
+
+    ProductAgg:
+      type: object
+      required:
+        - sum
+        - average
+        - count
+      properties:
+        sum:
+          type: number
+          format: double
+          description: Sum of prices for this product
+          example: 5000.00
+        average:
+          type: number
+          format: double
+          description: |
+            Mean price for this product (`sum / count`). `0` when count is 0.
+          example: 1000.00
+        count:
+          type: integer
+          format: int64
+          description: Number of orders for this product
+          example: 5
+      description: Per-product aggregation metrics.
+
+    Error:
+      type: object
+      required:
+        - error
+      properties:
+        error:
+          type: string
+          description: Human-readable error message
+          example: "method not allowed"
+      description: Standard error response body.
+
+  securitySchemes: {}
