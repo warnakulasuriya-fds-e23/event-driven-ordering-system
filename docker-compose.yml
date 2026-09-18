@@ -58,7 +58,7 @@ services:
       PRODUCER_BASE_DELAY_MS: "100"
       DLQ_FILE_PATH: "/dlq/producer-dlq.jsonl"
     volumes:
-      - ./dlq-producer:/dlq
+      - /tmp/dlq-producer:/dlq
     depends_on:
       kafka-init:
         condition: service_completed_successfully
@@ -75,14 +75,14 @@ services:
       KAFKA_BOOTSTRAP_SERVERS: kafka:9092
       KAFKA_TOPIC: orders
       KAFKA_GROUP_ID: orders-consumer
-      AGGREGATION_PORT: "8080"
+      AGGREGATION_PORT: "8085"
       CONSUMER_MAX_RETRIES: "3"
       CONSUMER_BASE_DELAY_MS: "1000"
       DLQ_FILE_PATH: "/dlq/consumer-dlq.jsonl"
     ports:
-      - "8080:8080"
+      - "8085:8085"
     volumes:
-      - ./dlq-consumer:/dlq
+      - /tmp/dlq-consumer:/dlq
     depends_on:
       kafka-init:
         condition: service_completed_successfully
