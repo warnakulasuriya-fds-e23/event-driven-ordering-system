@@ -21,3 +21,4 @@ dlq/
 dlq-producer/
 dlq-consumer/
 *.dlq.jsonl
+consumer/consumer
