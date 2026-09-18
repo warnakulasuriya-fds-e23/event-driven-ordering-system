@@ -98,6 +98,104 @@ Services are configured through environment variables (see `docker-compose.yml`)
 | `KAFKA_GROUP_ID`         |          | yes      | `orders-consumer`|
 | `AGGREGATION_PORT`       |          | yes      | `8080`          |
 
+## Retry Logic
+
+Both the producer and consumer implement retry logic for transient Kafka failures.
+Failed operations are retried with exponential backoff before giving up.
+
+### Producer Retry
+
+When the producer fails to publish an order to Kafka, it retries up to
+`PRODUCER_MAX_RETRIES` times with exponential backoff (`PRODUCER_BASE_DELAY_MS`
+as the base delay). If all retries are exhausted, the order is written to the
+file-based Dead Letter Queue (DLQ) instead of being lost.
+
+### Consumer Retry
+
+When the consumer encounters a transient error reading from Kafka, it retries
+up to `CONSUMER_MAX_RETRIES` times with exponential backoff (`CONSUMER_BASE_DELAY_MS`
+as the base delay). If retries are exhausted, it logs the error and continues
+polling. Note: if no message was received (e.g., connection failure), there is
+nothing to DLQ — the consumer simply continues to the next poll cycle.
+
+### Configuration
+
+| Variable                    | Producer | Consumer | Default   | Description                                      |
+|-----------------------------|----------|----------|------------|--------------------------------------------------|
+| `PRODUCER_MAX_RETRIES`      | yes      |          | `3`        | Max retry attempts for Kafka writes              |
+| `PRODUCER_BASE_DELAY_MS`    | yes      |          | `100`      | Base delay (ms) for exponential backoff          |
+| `CONSUMER_MAX_RETRIES`      |          | yes      | `3`        | Max retry attempts for Kafka reads              |
+| `CONSUMER_BASE_DELAY_MS`    |          | yes      | `1000`     | Base delay (ms) for exponential backoff          |
+
+### Logging
+
+Retry attempts are logged at WARNING level with fields:
+- `attempt`: current attempt number (1-based)
+- `max_retries`: maximum number of retry attempts
+- `error`: the transient error message
+
+## Dead Letter Queue (DLQ)
+
+When retries are exhausted, failed messages are written to a file-based DLQ
+instead of being lost. This provides a durable record of failed messages for
+later inspection and replay.
+
+### How It Works
+
+1. **Producer**: If an order fails to publish after all retries, it is written
+   to the DLQ file with the order details and error information.
+
+2. **Consumer**: If a message cannot be decoded (Avro parse error), it is
+   written to the DLQ file with Kafka metadata (topic, partition, offset) and
+   the error. The offset is then committed so the message is not re-read.
+
+### DLQ File Format
+
+The DLQ uses JSONL format (one JSON object per line) for easy parsing and inspection.
+
+**Producer DLQ entries** (`producer-dlq.jsonl`):
+```json
+{"timestamp":"2026-01-15T10:30:00Z","order_id":"abc-123","product":"laptop","price":999.99,"error":"kafka write failed: connection refused","retry_count":3}
+```
+
+**Consumer DLQ entries** (`consumer-dlq.jsonl`):
+```json
+{"timestamp":"2026-01-15T10:30:00Z","topic":"orders","partition":0,"offset":1234,"error":"avro decode failed: invalid schema","raw_bytes_length":1024}
+```
+
+### Configuration
+
+| Variable         | Producer | Consumer | Default                        | Description                    |
+|------------------|----------|----------|--------------------------------|--------------------------------|
+| `DLQ_FILE_PATH`  | yes      | yes      | `dlq/<service>-dlq.jsonl`     | Path to the DLQ file           |
+
+### Inspection
+
+```bash
+# View producer DLQ
+cat dlq-producer/producer-dlq.jsonl | jq
+
+# View consumer DLQ
+cat dlq-consumer/consumer-dlq.jsonl | jq
+
+# Count DLQ entries
+wc -l dlq-producer/producer-dlq.jsonl
+wc -l dlq-consumer/consumer-dlq.jsonl
+```
+
+### Docker Volume Mounts
+
+The DLQ directories are mounted as volumes so files persist on the host:
+
+- Producer DLQ: `./dlq-producer:/dlq`
+- Consumer DLQ: `./dlq-consumer:/dlq`
+
+### File Durability
+
+- Each DLQ entry is synchronously synced to disk (`fsync`) after writing.
+- The DLQ file is opened in append mode, so entries are never lost on restart.
+- The parent directory is created automatically if it doesn't exist.
+
 ## Inspecting the topic
 
 ```bash
