@@ -47,7 +47,47 @@ schema (`@timestamp`, `level`, `logger`, `@message`, plus event fields). This ke
 logs parseable and indexable by the planned Alloy / Loki / Grafana shipping stack
 without reshaping.
 
-## Configuration
+## Aggregation API
+
+The consumer exposes a read-only HTTP API for real-time aggregation metrics.
+The data is held in-memory (updated by the Kafka reader loop) and served as a
+JSON snapshot on demand. No separate aggregation service is required.
+
+**Endpoint:** `GET /metrics`
+
+**Example:**
+
+```bash
+curl -s http://localhost:8080/metrics | jq
+```
+
+**Response shape:**
+
+```json
+{
+  "overall": {
+    "total_sum": 21345.67,
+    "overall_average": 38.72,
+    "order_count": 551
+  },
+  "by_product": {
+    "laptop":  { "sum": 5000.00, "average": 1000.00, "count": 5 },
+    "keyboard": { "sum": 250.00,  "average": 25.00,  "count": 10 }
+  }
+}
+```
+
+- `overall.total_sum` — sum of all order prices seen so far.
+- `overall.overall_average` — mean price across all orders (`total_sum / order_count`, or `0` when no orders yet).
+- `overall.order_count` — total number of orders consumed.
+- `by_product` — per-product breakdown keyed by the `product` field of the order (`laptop`, `keyboard`, `mouse`, etc.).
+
+All monetary values are in the same unit as the `price` field of the Avro schema (float64).
+
+The product catalog is finite and bounded, so the in-memory state never grows
+unbounded. Orders with a product not seen before are still tracked dynamically.
+
+### Configuration
 
 Services are configured through environment variables (see `docker-compose.yml`):
 
@@ -56,6 +96,7 @@ Services are configured through environment variables (see `docker-compose.yml`)
 | `KAFKA_BOOTSTRAP_SERVERS`| yes      | yes      | `localhost:9092`|
 | `KAFKA_TOPIC`            | yes      | yes      | `orders`        |
 | `KAFKA_GROUP_ID`         |          | yes      | `orders-consumer`|
+| `AGGREGATION_PORT`       |          | yes      | `8080`          |
 
 ## Inspecting the topic
 

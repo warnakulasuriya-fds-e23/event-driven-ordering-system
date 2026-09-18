@@ -59,6 +59,9 @@ services:
     restart: unless-stopped
 
   # ---- Consumer: logs events pulled from "orders" -------------------
+  # Also exposes an HTTP aggregation API on AGGREGATION_PORT (default 8080)
+  # so operators / dashboards can poll real-time metrics without redeploying
+  # or adding a separate service.
   consumer:
     build: ./consumer
     container_name: orders-consumer
@@ -66,6 +69,9 @@ services:
       KAFKA_BOOTSTRAP_SERVERS: kafka:9092
       KAFKA_TOPIC: orders
       KAFKA_GROUP_ID: orders-consumer
+      AGGREGATION_PORT: "8080"
+    ports:
+      - "8080:8080"
     depends_on:
       kafka-init:
         condition: service_completed_successfully
